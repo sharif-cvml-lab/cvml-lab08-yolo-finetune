@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+
+# generated at run time
+runs/*
+!runs/.gitkeep
+models/*
+!models/.gitkeep
+weights/*
+!weights/.gitkeep
+dataset/data.yaml
+dataset/inbox/*
+!dataset/inbox/.gitkeep
+dataset/**/*.cache
+*.cache
