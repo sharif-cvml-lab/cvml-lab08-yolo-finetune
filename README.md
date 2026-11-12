@@ -89,7 +89,7 @@ venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-4. Pretrained weights: the application downloads the nano models (`yolov8n.pt`, `yolo11n.pt`) into `assets/weights/` automatically the first time they are needed (internet required once). If the download fails, copy the files into `assets/weights/` by hand. Download link: https://my.sharif.edu/s/6qLsEdPobLPeSwp
+4. Pretrained weights: the application downloads the nano models (`yolov8n.pt`, `yolo11n.pt`) into `assets/weights/` automatically the first time they are needed (internet required once).
 
 5. Run the application:
 
@@ -236,10 +236,3 @@ Settings (theme, camera index, epochs, batch size, confidence, selected model) a
 - **Webcam does not open** - change *Camera index* in the sidebar and close other apps that use the camera. The application also works with image and video files.
 - **Training is slow** - lower the epochs / batch size, or use fewer images.
 - **Start over with the starter data** - `python assets/tools/make_starter_dataset.py --clean` (deletes **all** dataset images and labels).
-
-## For Instructors
-
-- `assets/tools/make_starter_dataset.py` regenerates the synthetic starter set (exact boxes). Replace it with real photos of a toy you bring to class if you prefer.
-- `assets/tools/train_headless.py` runs `finetune.py` without the GUI (useful for checking submissions); the training appears in the History as well.
-- Run the tests with `python -m unittest discover assets/tests`.
-- The reference solution is distributed separately (`finetune_solution.py`); copy it over `finetune.py`.
