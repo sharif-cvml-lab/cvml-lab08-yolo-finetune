@@ -27,6 +27,7 @@ from annotation_canvas import AnnotationCanvas, class_color
 from config import DEFAULT_CAMERA_INDEX, IMAGE_FILTER
 from dataset import DatasetError, DatasetStore, ImageItem
 from gui_common import VideoLabel, bgr_to_qimage, create_sidebar
+from thread_utils import call_when_idle, retire_thread
 from video_thread import CaptureThread
 
 
@@ -45,6 +46,8 @@ class DatasetPage(QWidget):
         self._capture_thread: CaptureThread | None = None
         self._last_frame = None
         self._captured = 0
+        self._checked: set[Path] = set()  # images ticked for bulk deletion
+        self._locked = False
 
         self._build_ui()
         self._build_shortcuts()
@@ -142,9 +145,22 @@ class DatasetPage(QWidget):
         self.image_list = QListWidget()
         self.image_list.setMinimumHeight(190)
         self.image_list.currentRowChanged.connect(self._on_row_changed)
+        self.image_list.itemChanged.connect(self._on_item_checked)
         images_layout.addWidget(self.image_list)
+        bulk_row = QHBoxLayout()
+        self.check_all_button = QPushButton("Tick All")
+        self.check_all_button.clicked.connect(lambda: self._set_all_checked(True))
+        self.uncheck_all_button = QPushButton("Untick All")
+        self.uncheck_all_button.clicked.connect(lambda: self._set_all_checked(False))
+        self.delete_checked_button = QPushButton("Delete Ticked")
+        self.delete_checked_button.setObjectName("danger")
+        self.delete_checked_button.clicked.connect(self._delete_checked)
+        for button in (self.check_all_button, self.uncheck_all_button, self.delete_checked_button):
+            bulk_row.addWidget(button)
+        images_layout.addLayout(bulk_row)
         self.list_info = QLabel("")
         self.list_info.setObjectName("Muted")
+        self.list_info.setWordWrap(True)
         images_layout.addWidget(self.list_info)
         layout.addWidget(images_box)
 
@@ -163,7 +179,14 @@ class DatasetPage(QWidget):
         add_row.addWidget(self.class_edit, 1)
         add_row.addWidget(add_class_button)
         classes_layout.addLayout(add_row)
-        tip = QLabel("Press 1-9 to choose the class. Select a box, then pick a class to relabel it.")
+        self.delete_class_button = QPushButton("Delete Selected Class")
+        self.delete_class_button.setObjectName("danger")
+        self.delete_class_button.setToolTip("Removes the class and every box that uses it.")
+        self.delete_class_button.clicked.connect(self._delete_class)
+        classes_layout.addWidget(self.delete_class_button)
+        tip = QLabel("Press 1-9 to choose the class. Select a box, then pick a class to relabel it.\n"
+                     "Label ONLY your own object: do not draw boxes around other things in the photo "
+                     "(person, cup, ...), even if you can see them.")
         tip.setObjectName("Muted")
         tip.setWordWrap(True)
         classes_layout.addWidget(tip)
@@ -212,6 +235,11 @@ class DatasetPage(QWidget):
 
     def apply_theme(self, dark: bool) -> None:
         self.canvas.set_dark(dark)
+
+    def set_locked(self, locked: bool) -> None:
+        """Read-only while a training runs (the trainer reads the dataset files)."""
+        self._locked = locked
+        self.setEnabled(not locked)
 
     def reset_defaults(self) -> None:
         self.camera_spin.setValue(DEFAULT_CAMERA_INDEX)
@@ -274,10 +302,45 @@ class DatasetPage(QWidget):
         self.dataset_changed.emit()
         self.status_changed.emit(f"Added class '{names[-1]}' (id {80 + len(names) - 1}).")
 
+    def _delete_class(self) -> None:
+        names = self.store.classes()
+        row = self.class_list.currentRow()
+        if not 0 <= row < len(names):
+            self.status_changed.emit("Select the class you want to delete in the Classes list first.")
+            return
+        self._commit_current()
+        boxes, images = self.store.class_usage(row)
+        text = f"Delete the class '{names[row]}'?"
+        if boxes:
+            text += (f"\n\nIts {boxes} box(es) in {images} image(s) are deleted too. Images left without any box "
+                     "go back to the 'not annotated' list. The ids of the classes after it move up by one.")
+        if QMessageBox.question(self, "Delete class", text) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            removed, unannotated = self.store.remove_class(row)
+        except DatasetError as error:
+            self.status_changed.emit(str(error))
+            return
+        remaining = len(names) - 1
+        if row < self._active_class:
+            self._active_class -= 1
+        self._active_class = max(0, min(self._active_class, remaining - 1))
+        self.current = None
+        self._dirty = False
+        self._reload_classes()
+        self._goto(None)
+        self.dataset_changed.emit()
+        message = f"Deleted class '{names[row]}'."
+        if removed:
+            message += f" {removed} box(es) removed"
+            message += f", {unannotated} image(s) are not annotated any more." if unannotated else "."
+        self.status_changed.emit(message)
+
     # ---------------------------------------------------------------- items
     def _reload_items(self, select: Path | None = None) -> None:
         previous_row = self.image_list.currentRow()
         self.items = self.store.list_items()
+        self._checked &= {item.path for item in self.items}  # forget images that no longer exist
         self._loading = True
         self.image_list.clear()
         target = -1
@@ -285,7 +348,10 @@ class DatasetPage(QWidget):
             count = self.store.count_boxes(item) if item.annotated else 0
             mark = "✓" if item.annotated else "○"
             suffix = f"   [{count} box{'es' if count != 1 else ''}]" if count else "   [not annotated]"
-            self.image_list.addItem(f"{mark}  {item.name}{suffix}")
+            entry = QListWidgetItem(f"{mark}  {item.name}{suffix}")
+            entry.setFlags(entry.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            entry.setCheckState(Qt.CheckState.Checked if item.path in self._checked else Qt.CheckState.Unchecked)
+            self.image_list.addItem(entry)
             if select is not None and item.path == select:
                 target = row
         if target < 0 and self.items:
@@ -316,7 +382,11 @@ class DatasetPage(QWidget):
             return False
         boxes = self.canvas.boxes()
         before = self.current.location
+        old_path = self.current.path
         self.current = self.store.save_boxes(self.current, boxes)
+        if old_path in self._checked and old_path != self.current.path:
+            self._checked.discard(old_path)  # the image moved (inbox <-> train / val): keep it ticked
+            self._checked.add(self.current.path)
         self._dirty = False
         if boxes:
             self.status_changed.emit(f"Saved {len(boxes)} box(es) to {self.current.location}/{self.current.name}.")
@@ -383,7 +453,54 @@ class DatasetPage(QWidget):
         else:
             lines.append("No custom classes yet.")
         self.stats_label.setText("\n".join(lines))
-        self.list_info.setText(f"{len(self.items)} image(s). ✓ = saved in the dataset, ○ = waiting for boxes.")
+        self.list_info.setText(f"{len(self.items)} image(s). ✓ = saved in the dataset, ○ = waiting for boxes. "
+                               "Tick images to delete many at once.")
+        self.delete_checked_button.setText(f"Delete Ticked ({len(self._checked)})" if self._checked else "Delete Ticked")
+
+    def _on_item_checked(self, entry: QListWidgetItem) -> None:
+        if self._loading:
+            return
+        row = self.image_list.row(entry)
+        if not 0 <= row < len(self.items):
+            return
+        path = self.items[row].path
+        if entry.checkState() == Qt.CheckState.Checked:
+            self._checked.add(path)
+        else:
+            self._checked.discard(path)
+        self._update_stats()
+
+    def _set_all_checked(self, checked: bool) -> None:
+        self._checked = {item.path for item in self.items} if checked else set()
+        self._loading = True
+        for row in range(self.image_list.count()):
+            self.image_list.item(row).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        self._loading = False
+        self._update_stats()
+
+    def _delete_checked(self) -> None:
+        if not self._checked:
+            self.status_changed.emit("Tick the images you want to delete first (checkbox in the list).")
+            return
+        count = len(self._checked)
+        answer = QMessageBox.question(
+            self, "Delete images", f"Delete {count} ticked image(s) and their annotations?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._stop_webcam()
+        if self.current is not None and self.current.path in self._checked:
+            self._dirty = False  # it is going to be deleted anyway: do not save it first
+        else:
+            self._commit_current()
+        targets = [item for item in self.store.list_items() if item.path in self._checked]
+        deleted = self.store.delete_items(targets)
+        self._checked.clear()
+        keep = self.current.path if self.current is not None and self.current.path.exists() else None
+        self.current = None
+        self._dirty = False
+        self._goto(keep)
+        self.dataset_changed.emit()
+        self.status_changed.emit(f"Deleted {deleted} image(s).")
 
     # --------------------------------------------------------------- import
     def _add_images(self) -> None:
@@ -410,10 +527,12 @@ class DatasetPage(QWidget):
         self._commit_current()
         self._captured = 0
         self._last_frame = None
-        self._capture_thread = CaptureThread(self.camera_spin.value(), parent=self)
-        self._capture_thread.frame_ready.connect(self._on_live_frame)
-        self._capture_thread.status_changed.connect(self.status_changed)
-        self._capture_thread.start()
+        thread = CaptureThread(self.camera_spin.value())
+        self._capture_thread = thread
+        thread.frame_ready.connect(self._on_live_frame)
+        thread.status_changed.connect(self.status_changed)
+        # start only when no old camera thread is still shutting down (it may hold the device)
+        call_when_idle(lambda: thread.start() if self._capture_thread is thread else None)
         self.live_label.clear_frame()
         self.live_label.setText("Starting webcam...")
         self.stack.setCurrentWidget(self.live_label)
@@ -422,11 +541,15 @@ class DatasetPage(QWidget):
         self.canvas_title.setText("Live Webcam  -  move the object around and capture many angles")
 
     def _stop_webcam(self) -> None:
-        if self._capture_thread is None:
+        thread, self._capture_thread = self._capture_thread, None
+        if thread is None:
             return
-        self._capture_thread.stop()
-        self._capture_thread.deleteLater()
-        self._capture_thread = None
+        for signal in (thread.frame_ready, thread.status_changed):
+            try:
+                signal.disconnect()
+            except TypeError:
+                pass
+        retire_thread(thread)  # never blocks and never deletes a running thread
         self.stack.setCurrentWidget(self.canvas)
         self.webcam_button.setText("Webcam")
         self.capture_button.setEnabled(False)

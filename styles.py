@@ -92,6 +92,34 @@ QGroupBox::title { left: 12px; padding: 0 6px; }
 QScrollArea { border: none; background: transparent; }
 QScrollBar:vertical { width: 10px; background: transparent; }
 QScrollBar::handle:vertical { background: $scroll; border-radius: 5px; min-height: 30px; }
+QTabWidget::pane { border: none; background: transparent; top: -1px; }
+QTabBar::tab {
+    background: $btn_bg;
+    color: $btn_text;
+    border: 1px solid $btn_border;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 7px 20px;
+    margin-right: 4px;
+}
+QTabBar::tab:selected { background: $accent; border-color: $accent_border; color: #ffffff; font-weight: 700; }
+QTableWidget {
+    background: $input_bg;
+    border: 1px solid $btn_border;
+    border-radius: 8px;
+    gridline-color: $card_border;
+}
+QTableWidget::item { padding: 3px 6px; }
+QTableWidget::item:selected { background: $list_sel; color: $text; }
+QHeaderView::section {
+    background: $btn_bg;
+    color: $metric;
+    border: none;
+    border-bottom: 1px solid $btn_border;
+    padding: 5px 8px;
+    font-weight: 600;
+}
 QToolTip { background: $card; color: $text; border: 1px solid $card_border; }
 """)
 

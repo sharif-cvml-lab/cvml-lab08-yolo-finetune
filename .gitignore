@@ -6,14 +6,12 @@ venv/
 .vscode/
 
 # generated at run time
-runs/*
-!runs/.gitkeep
-models/*
-!models/.gitkeep
-weights/*
-!weights/.gitkeep
-dataset/data.yaml
-dataset/inbox/*
-!dataset/inbox/.gitkeep
-dataset/**/*.cache
+assets/outputs/*
+!assets/outputs/.gitkeep
+assets/weights/*
+!assets/weights/.gitkeep
+assets/dataset/data.yaml
+assets/dataset/inbox/*
+!assets/dataset/inbox/.gitkeep
 *.cache
+*.pt

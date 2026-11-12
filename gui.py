@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
 
 from config import (
     APP_NAME,
-    CUSTOM_MODEL_PATH,
     DEFAULT_SETTINGS_MESSAGE,
     DEFAULT_THEME,
     ORGANIZATION_NAME,
@@ -26,7 +25,9 @@ from dataset import DatasetStore
 from gui_compare import ComparePage
 from gui_dataset import DatasetPage
 from gui_train import TrainPage
+from history import RunHistory
 from styles import build_style
+from thread_utils import wait_for_retired_threads
 
 STEP_TITLES = ("1  Dataset Builder", "2  Train", "3  Before / After")
 
@@ -42,6 +43,8 @@ class AppWindow(QMainWindow):
 
         self.settings = QSettings(ORGANIZATION_NAME, APP_NAME)
         self.store = DatasetStore()
+        self.history = RunHistory()
+        self.history.mark_interrupted()  # trainings cut off by a crash / closed window
         self._closing = False
         self._dark = self.settings.value("theme", DEFAULT_THEME) == "dark"
 
@@ -49,8 +52,6 @@ class AppWindow(QMainWindow):
         self._build_shortcuts()
         self._apply_theme()
         self.settings_label.setText("Settings: Restored")
-        if CUSTOM_MODEL_PATH.exists():
-            self.compare_page.set_custom_weights(str(CUSTOM_MODEL_PATH))
         self._set_step(0)
 
     # ------------------------------------------------------------------ UI
@@ -93,8 +94,8 @@ class AppWindow(QMainWindow):
         root.addWidget(header)
 
         self.dataset_page = DatasetPage(self.store, self.settings)
-        self.train_page = TrainPage(self.store, self.settings)
-        self.compare_page = ComparePage(self.settings)
+        self.train_page = TrainPage(self.store, self.history, self.settings)
+        self.compare_page = ComparePage(self.history, self.settings)
         self.pages = [self.dataset_page, self.train_page, self.compare_page]
         self.stack = QStackedWidget()
         for page in self.pages:
@@ -103,7 +104,9 @@ class AppWindow(QMainWindow):
         self.compare_page.fps_changed.connect(lambda fps: self.fps_label.setText(f"FPS: {fps:.1f}"))
         self.dataset_page.dataset_changed.connect(self.train_page.refresh_summary)
         self.train_page.training_finished.connect(self._on_training_finished)
-        self.train_page.go_to_compare.connect(lambda: self._set_step(2))
+        self.train_page.history_changed.connect(lambda: self.compare_page.refresh_runs())
+        self.train_page.training_state_changed.connect(self._on_training_state)
+        self.train_page.go_to_compare.connect(self._open_compare)
         root.addWidget(self.stack, 1)
 
         status = QFrame()
@@ -149,9 +152,20 @@ class AppWindow(QMainWindow):
     def _show_status(self, text: str) -> None:
         self.status_label.setText(text)
 
-    def _on_training_finished(self, path: str) -> None:
-        self.compare_page.set_custom_weights(path)
+    def _on_training_finished(self, run_id: str) -> None:
+        self.compare_page.refresh_runs(select=run_id)
         self.status_label.setText("Training finished. Open Step 3 (Before / After) to see the result.")
+
+    def _on_training_state(self, running: bool) -> None:
+        # the trainer reads the dataset files, so Step 1 is read-only while it runs
+        self.dataset_page.set_locked(running)
+        if running:
+            self.status_label.setText("Training is running. Step 1 is locked until it finishes.")
+
+    def _open_compare(self, run_id: str) -> None:
+        if run_id:
+            self.compare_page.refresh_runs(select=run_id)
+        self._set_step(2)
 
     # --------------------------------------------------------------- theme
     def _apply_theme(self) -> None:
@@ -186,6 +200,7 @@ class AppWindow(QMainWindow):
             self._save_settings()
             for page in self.pages:
                 page.shutdown()
+            wait_for_retired_threads()  # let camera threads end before Qt tears everything down
         event.accept()
 
 

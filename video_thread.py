@@ -49,6 +49,6 @@ class CaptureThread(QThread):
             self.msleep(int(1000 / TARGET_FPS))
         capture.release()
 
-    def stop(self) -> None:
+    def request_stop(self) -> None:
+        """Non-blocking: the thread ends by itself (see thread_utils.retire_thread)."""
         self._running = False
-        self.wait(3000)

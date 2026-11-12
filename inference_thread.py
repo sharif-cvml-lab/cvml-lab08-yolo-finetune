@@ -78,9 +78,14 @@ class InferenceThread(QThread):
         self._custom_weights = path
         self._reload_models = True
 
-    def stop(self) -> None:
+    def set_models(self, base_weights: str, custom_weights: str | None) -> None:
+        self._base_weights = base_weights
+        self._custom_weights = custom_weights
+        self._reload_models = True
+
+    def request_stop(self) -> None:
+        """Non-blocking: the thread ends by itself (see thread_utils.retire_thread)."""
         self._running = False
-        self.wait(5000)
 
     # ---- models ---------------------------------------------------------- #
     def _load_models(self) -> None:

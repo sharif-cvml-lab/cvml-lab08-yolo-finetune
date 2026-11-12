@@ -36,12 +36,27 @@ def get_device() -> str:
 
 
 def resolve_weights(name_or_path: str) -> str:
-    """Use weights/<name> when it exists, otherwise let ultralytics download <name>."""
+    """Return the path of a pretrained model: assets/weights/<name>, downloaded when missing.
+
+    Without this, ultralytics would download the file into whatever folder the program was
+    started from and the project root would fill up with .pt files.
+    """
     candidate = Path(name_or_path)
     if candidate.exists():
         return str(candidate)
     local = WEIGHTS_DIR / candidate.name
-    return str(local) if local.exists() else str(name_or_path)
+    if local.exists():
+        return str(local)
+    try:
+        from ultralytics.utils.downloads import attempt_download_asset
+
+        WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+        downloaded = attempt_download_asset(str(local))
+        if downloaded and Path(downloaded).exists():
+            return str(downloaded)
+    except Exception:  # noqa: BLE001 - offline / unknown name: let ultralytics report it
+        pass
+    return str(name_or_path)
 
 
 def dataset_num_classes(dataset_config: str) -> int:

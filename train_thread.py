@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+import config
 from config import TrainingParameters
 from model_utils import resolve_weights
 from training_reporter import TrainingReporter
@@ -20,13 +21,15 @@ class TrainThread(QThread):
     progress = pyqtSignal(dict)
     log_message = pyqtSignal(str)
     finished_ok = pyqtSignal(str)
-    failed = pyqtSignal(str, str)  # kind ("todo" | "import" | "error"), message
+    failed = pyqtSignal(str, str)  # kind ("todo" | "import" | "stopped" | "error"), message
 
-    def __init__(self, params: TrainingParameters, data_yaml: str, output_dir: str, parent=None):
+    def __init__(self, params: TrainingParameters, data_yaml: str, output_dir: str,
+                 run_name: str, parent=None):
         super().__init__(parent)
         self._params = params
         self._data_yaml = data_yaml
         self._output_dir = output_dir
+        self._run_name = run_name  # every training gets its own folder: output_dir / run_name
         self._reporter = TrainingReporter(self.progress.emit)
 
     def request_stop(self) -> None:
@@ -37,6 +40,9 @@ class TrainThread(QThread):
             self.log_message.emit("Loading finetune.py and ultralytics (the first run can take a while)...")
             import finetune
 
+            # finetune.py reads RUN_NAME from config.py when it is (re)loaded: setting it here
+            # gives every training its own folder without touching the student's file.
+            config.RUN_NAME = self._run_name
             finetune = importlib.reload(finetune)
             best = finetune.train_custom_detector(
                 dataset_config=self._data_yaml,
@@ -46,6 +52,9 @@ class TrainThread(QThread):
                 output_dir=self._output_dir,
                 reporter=self._reporter,
             )
+            if (not best or not Path(best).exists()) and self._reporter.stop_requested:
+                self.failed.emit("stopped", "Training was stopped before the first epoch finished.")
+                return
             if not best or not Path(best).exists():
                 self.failed.emit(
                     "error",

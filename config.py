@@ -10,12 +10,17 @@ ORGANIZATION_NAME = "Sharif CVML Lab"
 # Paths
 # --------------------------------------------------------------------------- #
 ROOT_DIR = Path(__file__).resolve().parent
-DATASET_DIR = ROOT_DIR / "dataset"
-WEIGHTS_DIR = ROOT_DIR / "weights"
-MODELS_DIR = ROOT_DIR / "models"
-RUNS_DIR = ROOT_DIR / "runs"
-CUSTOM_MODEL_PATH = MODELS_DIR / "custom_best.pt"
-RUN_NAME = "custom"
+
+# Everything that is not Python code lives in assets/:
+#   assets/dataset/   your images + boxes (YOLO format)
+#   assets/weights/   pretrained YOLO weights (downloaded here automatically)
+#   assets/outputs/   everything the program CREATES (one folder per training)
+ASSETS_DIR = ROOT_DIR / "assets"
+DATASET_DIR = ASSETS_DIR / "dataset"
+WEIGHTS_DIR = ASSETS_DIR / "weights"
+OUTPUTS_DIR = ASSETS_DIR / "outputs"
+TRAININGS_DIR = OUTPUTS_DIR / "trainings"
+RUN_NAME = "train"  # default folder name; the GUI replaces it with a unique name per training
 
 # --------------------------------------------------------------------------- #
 # Camera / UI

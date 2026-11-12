@@ -1,3 +1,0 @@
-toy_star
-toy_cube
-toy_ring
